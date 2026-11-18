@@ -1,0 +1,5 @@
+add_library(bwt_compression src/compression.cpp src/arithmetic.cpp src/huffman.cpp)
+add_library(bwt::compression ALIAS bwt_compression)
+target_include_directories(bwt_compression PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(bwt_compression PUBLIC cxx_std_23)
+set_target_properties(bwt_compression PROPERTIES CXX_EXTENSIONS OFF)

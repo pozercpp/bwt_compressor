@@ -1,0 +1,49 @@
+# CMake build directories and generated files
+/build/
+/build-*/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+/Testing/
+/Makefile
+/build.ninja
+/.ninja_deps
+/.ninja_log
+compile_commands.json
+CMakeUserPresets.json
+
+# Compiled objects and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+
+# Python test cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local editor settings and temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Archives created while using the CLI
+*.bwa
+
+# Local agent configuration and credentials
+/.agents/
+/.codex/
+/.aws/
