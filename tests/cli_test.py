@@ -7,10 +7,11 @@ import sys
 import tempfile
 
 executable = pathlib.Path(sys.argv[1]).resolve()
+backend = pathlib.Path(sys.argv[2]).resolve()
 
 
 def run(*args, expected=0):
-    result = subprocess.run([str(executable), *map(str, args)], capture_output=True)
+    result = subprocess.run([str(executable), *map(str, args)], capture_output=True, timeout=60)
     if result.returncode != expected:
         raise AssertionError((args, result.returncode, result.stdout, result.stderr))
     return result
@@ -18,7 +19,7 @@ def run(*args, expected=0):
 
 with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     root = pathlib.Path(directory)
-    run("--help")
+    assert b"--threads" not in run("--help").stdout
     run(expected=2)
     run("unknown", "a", "b", expected=2)
     source = root / "source with spaces.bin"
@@ -36,6 +37,43 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
         assert source.read_bytes() == sample
         archive.unlink()
         restored.unlink()
+
+    # More blocks than the maximum in-flight window, with unequal costs.
+    block_size = 1024 * 1024
+    mixed = b"".join(bytes([i]) * block_size if i % 3 else rng.randbytes(block_size)
+                     for i in range(10)) + b"last partial block"
+    source.write_bytes(mixed)
+    archives = []
+    for threads in (1, 2, 4):
+        path = root / f"parallel-{threads}.bwa"
+        subprocess.run([str(backend), "compress", str(source), str(path), str(threads)],
+                       check=True, capture_output=True, timeout=60)
+        archives.append(path.read_bytes())
+        subprocess.run([str(backend), "decompress", str(path), str(restored), str(threads)],
+                       check=True, capture_output=True, timeout=60)
+        assert restored.read_bytes() == mixed
+        restored.unlink()
+    assert archives[0] == archives[1] == archives[2], "Block order or format changed"
+    automatic = root / "automatic.bwa"
+    run("compress", source, automatic)
+    assert automatic.read_bytes() == archives[0]
+    run("decompress", automatic, restored)
+    assert restored.read_bytes() == mixed
+    restored.unlink()
+    # Error in a later worker, with already written and queued blocks.
+    late_bad = bytearray(archives[0])
+    offset = 4
+    for _ in range(5):
+        offset += 4 + struct.unpack_from("<I", late_bad, offset)[0]
+    late_bad[offset + 4 + 13] ^= 1
+    late_archive = root / "late-error.bwa"
+    late_archive.write_bytes(late_bad)
+    run("decompress", late_archive, restored, expected=1)
+    assert not restored.exists()
+    for count in ("1", "4", "0", "5", "-1", "abc", "2x", "", "9999999999999999999"):
+        run("compress", source, restored, "--threads", count, expected=2)
+        assert not restored.exists()
+    run("compress", source, restored, "--unknown", 2, expected=2)
 
     source.write_bytes(b"abc" * 800000)
     run("compress", source, archive)

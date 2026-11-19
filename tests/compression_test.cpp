@@ -70,6 +70,7 @@ int main() {
     Bytes large_random(bwt::max_block_size);
     std::ranges::generate(large_random, [&] { return static_cast<std::byte>(random() % 256); });
     round_trip(large_random);
+    require(bwt::compress(large_random) == bwt::compress(large_random, {.parallel_entropy = false}));
     bool too_large = false;
     try {
         (void)bwt::compress(Bytes(bwt::max_block_size + 1));

@@ -3,6 +3,7 @@
 #include "huffman.hpp"
 
 #include <algorithm>
+#include <future>
 #include <ranges>
 #include <array>
 #include <cstdint>
@@ -211,6 +212,10 @@ Bytes decode_rle_mtf(std::span<const std::byte> payload, std::size_t size) {
 } // namespace
 
 std::vector<std::byte> compress(std::span<const std::byte> input) {
+    return compress(input, {});
+}
+
+std::vector<std::byte> compress(std::span<const std::byte> input, CompressionOptions options) {
     if (input.size() > max_block_size) {
         throw std::length_error("Input block exceeds the 1 MiB limit.");
     }
@@ -221,8 +226,21 @@ std::vector<std::byte> compress(std::span<const std::byte> input) {
         auto [last, index] = encode_bwt(input);
         const auto codes = encode_mtf(last);
         const auto rle = encode_rle(codes);
-        auto entropy = detail::encode_arithmetic(rle);
-        auto huffman = detail::encode_huffman(rle);
+        Bytes entropy, huffman;
+        // Small RLE streams do not justify creating a worker thread.
+        constexpr std::size_t parallel_threshold = 64 * 1024;
+        if (options.parallel_entropy && rle.size() >= parallel_threshold) {
+            // The future is destroyed before rle, including on exceptions:
+            // the worker always finishes while the shared input is alive.
+            auto arithmetic = std::async(std::launch::async, [&rle] {
+                return detail::encode_arithmetic(rle);
+            });
+            huffman = detail::encode_huffman(rle);
+            entropy = arithmetic.get();
+        } else {
+            entropy = detail::encode_arithmetic(rle);
+            huffman = detail::encode_huffman(rle);
+        }
         unsigned candidate = 3;
         if (huffman.size() < entropy.size()) {
             entropy = std::move(huffman);

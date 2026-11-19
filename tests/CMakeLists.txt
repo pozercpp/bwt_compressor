@@ -6,6 +6,9 @@ add_executable(huffman_tests huffman_test.cpp)
 target_link_libraries(huffman_tests PRIVATE bwt::compression)
 add_test(NAME huffman_tests COMMAND huffman_tests)
 
+add_executable(archive_test_driver archive_test_driver.cpp)
+target_link_libraries(archive_test_driver PRIVATE compressor::archive)
+
 find_package(Python3 3.9 COMPONENTS Interpreter REQUIRED)
 add_test(NAME cli_tests COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/cli_test.py $<TARGET_FILE:compressor>)
+    ${CMAKE_CURRENT_SOURCE_DIR}/cli_test.py $<TARGET_FILE:compressor> $<TARGET_FILE:archive_test_driver>)
