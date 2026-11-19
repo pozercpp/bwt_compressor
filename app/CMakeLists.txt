@@ -1,3 +1,10 @@
+add_library(compressor_cli_progress progress_display.cpp)
+add_library(compressor::cli_progress ALIAS compressor_cli_progress)
+target_include_directories(compressor_cli_progress PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(compressor_cli_progress PUBLIC compressor::archive)
+target_compile_features(compressor_cli_progress PUBLIC cxx_std_23)
+set_target_properties(compressor_cli_progress PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(compressor main.cpp)
-target_link_libraries(compressor PRIVATE compressor::archive)
+target_link_libraries(compressor PRIVATE compressor::archive compressor::cli_progress)
 set_target_properties(compressor PROPERTIES CXX_EXTENSIONS OFF)
