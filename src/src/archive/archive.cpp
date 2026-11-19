@@ -80,15 +80,18 @@ public:
     }
 };
 
-std::uint64_t compress_stream(std::istream& in, std::ostream& out, unsigned threads) {
+std::uint64_t compress_stream(std::istream& in, std::ostream& out, unsigned threads, ProgressTracker* progress) {
     write_bytes(out, magic);
     BlockPool pool(threads);
     std::deque<std::future<BlockPool::Bytes>> pending;
+    std::deque<std::size_t> original_sizes;
     auto write_next = [&] {
         auto encoded = pending.front().get();
         write_number(out, encoded.size(), 4);
         write_bytes(out, encoded);
         pending.pop_front();
+        if (progress) progress->advance(original_sizes.front());
+        original_sizes.pop_front();
     };
     std::uint64_t total = 0;
     for (;;) {
@@ -100,6 +103,7 @@ std::uint64_t compress_stream(std::istream& in, std::ostream& out, unsigned thre
         if (count) {
             buffer.resize(count);
             pending.push_back(pool.submit(std::move(buffer), true));
+            original_sizes.push_back(count);
             add_size(total, count);
         }
         if (in.eof()) break;
@@ -110,7 +114,7 @@ std::uint64_t compress_stream(std::istream& in, std::ostream& out, unsigned thre
     return total;
 }
 
-std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned threads, bool standalone, std::uint64_t max_output) {
+std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned threads, bool standalone, std::uint64_t max_output, ProgressTracker* progress) {
     std::array<std::byte, 4> signature{};
     read_bytes(in, signature);
     if (!std::ranges::equal(signature, magic)) throw std::runtime_error("Unsupported archive format; expected BWA1.");
@@ -123,6 +127,7 @@ std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned th
         if (decoded.size() > max_output - total) throw std::runtime_error("Decoded file exceeds its declared size.");
         write_bytes(out, decoded);
         add_size(total, decoded.size());
+        if (progress) progress->advance(decoded.size());
         pending.pop_front();
     };
     for (;;) {
@@ -143,9 +148,46 @@ std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned th
     return total;
 }
 
+// Consume bytes instead of seeking: seeking past EOF could hide truncation.
+// Only framing/header sizes are inspected; payload and CRC remain unchecked.
+std::uint64_t list_stream(std::istream& in, bool standalone) {
+    std::array<std::byte, 4> signature{};
+    read_bytes(in, signature);
+    if (signature != magic) throw std::runtime_error("Expected BWA1 stream.");
+    std::uint64_t total = 0;
+    std::array<std::byte, 8192> buffer{};
+    for (;;) {
+        const auto size = read_number(in, 4);
+        if (size == 0) break;
+        if (size < block_header_size || size > bwt::max_block_size + block_header_size) {
+            throw std::runtime_error("Invalid archive block size.");
+        }
+        read_bytes(in, signature);
+        if (signature != std::array{std::byte{'B'}, std::byte{'W'}, std::byte{'C'}, std::byte{'1'}}) {
+            throw std::runtime_error("Expected BWC1 block.");
+        }
+        (void)read_number(in, 1); // mode: content validation belongs to test
+        const auto original = read_number(in, 4);
+        if (original == 0 || original > bwt::max_block_size) {
+            throw std::runtime_error("Invalid original block size.");
+        }
+        add_size(total, original);
+        for (auto remaining = size - 9; remaining != 0;) {
+            const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
+            read_bytes(in, std::span(buffer).first(count));
+            remaining -= count;
+        }
+    }
+    if (read_number(in, 8) != total) throw std::runtime_error("Archive size check failed.");
+    if (standalone && in.peek() != std::char_traits<char>::eof()) throw std::runtime_error("Unexpected trailing archive data.");
+    if (standalone && (in.bad() || !in.eof())) throw std::runtime_error("Failed to read archive ending.");
+    return total;
+}
+
 std::uint64_t process_file(const std::filesystem::path& input_path,
                            const std::filesystem::path& output_path,
                            Options options, bool compressing) {
+    ProgressTracker progress(options.progress);
     if (options.threads < 1 || options.threads > max_threads) {
         throw std::invalid_argument("Worker count must be between 1 and 4.");
     }
@@ -154,10 +196,17 @@ std::uint64_t process_file(const std::filesystem::path& input_path,
     }
     std::ifstream input(input_path, std::ios::binary);
     if (!input) throw std::runtime_error("Cannot open input file: " + input_path.string());
+    const auto input_size = std::filesystem::file_size(input_path);
+    progress.start(input_size, compressing ? std::optional<std::uint64_t>(input_size) : std::nullopt);
     OutputFile output(output_path);
-    const auto total = compressing ? compress_stream(input, output.stream(), options.threads)
-                                  : decompress_stream(input, output.stream(), options.threads, true);
+    const auto total = compressing ? compress_stream(input, output.stream(), options.threads, &progress)
+                                  : decompress_stream(input, output.stream(), options.threads, true,
+                                      std::numeric_limits<std::uint64_t>::max(), &progress);
+    const auto position = output.stream().tellp();
+    if (position < 0) throw std::runtime_error("Cannot determine output size.");
+    const auto result_size = compressing ? static_cast<std::uint64_t>(position) : total;
     output.finish();
+    progress.finish(result_size);
     return total;
 }
 } // namespace

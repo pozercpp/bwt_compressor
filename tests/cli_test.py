@@ -25,6 +25,14 @@ def legacy_create(source, destination):
 with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     root = pathlib.Path(directory)
     assert b"--threads" not in run("--help").stdout
+    help_text = run('--help').stdout
+    assert b'does NOT verify contents or CRC' in help_text
+    assert b'fully decode' in help_text
+    for command in ('list', 'test'):
+        run(command, expected=2)
+        run(command, 'missing.bwa', 'extra', expected=2)
+        run(command, '--unknown', expected=2)
+        run(command, 'missing.bwa', expected=1)
     run(expected=2)
     run("unknown", "a", "b", expected=2)
     source = root / "source with spaces.bin"
@@ -37,6 +45,9 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     for sample in samples:
         source.write_bytes(sample)
         legacy_create(source, archive)
+        assert run('list', archive).stdout == f'file\t{len(sample)}\t(unnamed)\n'.encode()
+        run('test', archive)
+        assert not restored.exists()
         run("decompress", archive, restored)
         assert restored.read_bytes() == sample
         assert source.read_bytes() == sample
@@ -67,6 +78,8 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     late_bad[offset + 4 + 13] ^= 1
     late_archive = root / "late-error.bwa"
     late_archive.write_bytes(late_bad)
+    run('test', late_archive, expected=1)
+    run('list', late_archive)  # A late CRC error must not imply listing checks CRC.
     run("decompress", late_archive, restored, expected=1)
     assert not restored.exists()
     for count in ("1", "4", "0", "5", "-1", "abc", "2x", "", "9999999999999999999"):
@@ -103,6 +116,8 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
                    b"BWA1" + struct.pack("<I", 0xFFFFFFFF)]
     for contents in corruptions:
         bad.write_bytes(contents)
+        run('test', bad, expected=1)
+        run('list', bad, expected=0 if contents == changed_crc else 1)
         run("decompress", bad, restored, expected=1)
         assert not restored.exists(), "Incomplete output was left behind"
 

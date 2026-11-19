@@ -17,6 +17,24 @@ def run(*args, expected=0):
     return result
 
 
+def inspect_without_writes(archive, expected_entries):
+    # Detect creations/removals and changes to existing files, including staging.
+    def state():
+        return {str(p): (p.stat().st_size, p.stat().st_mtime_ns)
+                for p in archive.parent.rglob('*')}
+    before = state()
+    listing = run('list', archive).stdout.decode().splitlines()
+    actual = {}
+    for line in listing:
+        kind, size, name = line.split('\t', 2)
+        actual[name] = (kind, int(size))
+    assert len(listing) == len(actual)
+    assert actual == expected_entries, (actual, expected_entries)
+    total = sum(size for kind, size in expected_entries.values())
+    assert run('test', archive).stdout == f'Verified {total} bytes.\n'.encode()
+    assert state() == before, 'list/test changed the filesystem'
+
+
 def snapshot(root):
     return {str(p.relative_to(root)): None if p.is_dir() else p.read_bytes()
             for p in root.rglob('*')}
@@ -48,6 +66,7 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     source.mkdir()
     (source / 'empty').mkdir()
     (source / 'nested').mkdir()
+    (source / 'nested' / '資料' / 'пусто 📁').mkdir(parents=True)
     (source / 'nested' / 'пустой.txt').write_bytes(b'')
     (source / 'nested' / 'binary.bin').write_bytes(bytes(range(256)) * 17)
     (source / 'large.bin').write_bytes(random.Random(42).randbytes(1024 * 1024 + 11))
@@ -56,8 +75,13 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     archive = root / 'all.bwa'
     destination = root / 'restored'
     run('compress', archive, source, extra)
+    expected_entries = {source.name: ('directory', 0), extra.name: ('file', extra.stat().st_size)}
+    for path in source.rglob('*'):
+        expected_entries[f'{source.name}/{path.relative_to(source)}'] = (
+            'directory' if path.is_dir() else 'file', 0 if path.is_dir() else path.stat().st_size)
+    inspect_without_writes(archive, expected_entries)
     valid = archive.read_bytes()
-    assert valid[:4] == b'BWA2'
+    assert valid[:4] == b'BWA4'
     run('decompress', archive, destination)
     assert snapshot(destination / source.name) == snapshot(source)
     assert (destination / extra.name).read_bytes() == extra.read_bytes()
@@ -74,6 +98,39 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     destination.symlink_to(root / 'nonexistent')
     run('decompress', archive, destination, expected=1)
     destination.unlink()
+
+    # Several standalone files, including empty and Unicode names.
+    unicode_file = root / 'данные 日本語 📄.txt'
+    unicode_file.write_bytes('Unicode contents: привет 世界'.encode())
+    files_archive = root / 'files.bwa'
+    run('compress', files_archive, extra, unicode_file, source / 'nested' / 'пустой.txt')
+    run('decompress', files_archive, destination)
+    assert snapshot(destination) == {
+        extra.name: extra.read_bytes(), unicode_file.name: unicode_file.read_bytes(),
+        'пустой.txt': b'',
+    }
+    shutil.rmtree(destination)
+
+    # An existing destination containing a symlink must remain untouched.
+    destination.mkdir()
+    (destination / source.name).symlink_to(source, target_is_directory=True)
+    original_tree = snapshot(source)
+    run('decompress', archive, destination, expected=1)
+    assert (destination / source.name).is_symlink()
+    assert snapshot(source) == original_tree
+    shutil.rmtree(destination)
+
+    # BWA2 crosses the maximum eight-block window and then writes another file.
+    large = root / 'a-large.bin'
+    block_size = 1024 * 1024
+    large.write_bytes(b''.join(bytes([i]) * block_size for i in range(10)) + b'tail')
+    large_archive = root / 'large.bwa'
+    run('compress', large_archive, large, extra)
+    inspect_without_writes(large_archive, {
+        large.name: ('file', large.stat().st_size), extra.name: ('file', extra.stat().st_size)})
+    run('decompress', large_archive, destination)
+    assert snapshot(destination) == {large.name: large.read_bytes(), extra.name: extra.read_bytes()}
+    shutil.rmtree(destination)
 
     # Deterministic enumeration, independent of input order.
     other = root / 'other.bwa'
@@ -92,6 +149,7 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     # Empty files/directories as standalone inputs.
     empty_archive = root / 'empty.bwa'
     run('compress', empty_archive, source / 'empty', source / 'nested' / 'пустой.txt')
+    inspect_without_writes(empty_archive, {'empty': ('directory', 0), 'пустой.txt': ('file', 0)})
     run('decompress', empty_archive, destination)
     assert snapshot(destination) == {'empty': None, 'пустой.txt': b''}
     shutil.rmtree(destination)
@@ -118,8 +176,12 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     malformed = root / 'bad.bwa'
     sentinel = root / 'escape'
     sentinel.write_bytes(b'unchanged')
-    def reject(data):
+    def reject(data, list_expected=1):
         malformed.write_bytes(data)
+        before = set(root.rglob('*'))
+        run('test', malformed, expected=1)
+        run('list', malformed, expected=list_expected)
+        assert set(root.rglob('*')) == before
         run('decompress', malformed, destination, expected=1)
         assert not destination.exists() and not destination.is_symlink()
         assert sentinel.read_bytes() == b'unchanged'
@@ -133,6 +195,10 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     reject(container(file_record(b'a') + file_record(b'a/b'), 2))
     reject(container(file_record(b'missing/child'), 1))
     reject(container(record(1, b'a') + file_record(b'a'), 2))
+    reject(container(file_record(b'a') + record(1, b'a'), 2))
+    reject(container(file_record(b'a') + file_record(b'a'), 2))
+    reject(container(record(1, b'a') + file_record(b'a/../../escape'), 2))
+    reject(container(file_record(str(sentinel).encode()), 1))
     reject(container(bytes([3]), 1))  # no symlink record type
     reject(b'BWA2\x01' + struct.pack('<I', 0xffffffff))
     reject(container(record(2, b'x', struct.pack('<Q', 0) + nested(b'overflow')), 1))
@@ -147,13 +213,32 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
     corrupted = bytearray(container(file_record(b'file', b'hello'), 1, 5))
     block_offset = corrupted.index(b'BWC1')
     corrupted[block_offset + 13] ^= 1
-    reject(corrupted)
+    reject(corrupted, list_expected=0)
+    # Payload, mode and BWT index validation belong to test, not listing.
+    for offset in [4, 9, 17]:
+        bad_content = bytearray(container(file_record(b'file', b'hello'), 1, 5))
+        bad_content[bad_content.index(b'BWC1') + offset] ^= 128
+        reject(bad_content, list_expected=0)
+    reject(container(record(2, b'x', struct.pack('<Q', 0) + b'BAD!' + nested()[4:]), 1))
+    reject(container(record(2, b'x', struct.pack('<Q', 1) + b'BWA1' + struct.pack('<I', 0xffffffff)), 1))
+    malformed.write_bytes(container(b'', 0))
+    inspect_without_writes(malformed, {})
+    malformed.write_bytes(container(record(1, b'dir') + file_record(b'dir/file', b'old'), 2, 3))
+    inspect_without_writes(malformed, {'dir': ('directory', 0), 'dir/file': ('file', 3)})
+    run('decompress', malformed, destination)
+    assert (destination / 'dir/file').read_bytes() == b'old'
+    shutil.rmtree(destination)
     # Legacy BWA1 remains readable into a file, using a fixture independent of encoder.
     legacy = root / 'legacy.bwa'
-    legacy.write_bytes(nested(b'legacy data'))
-    run('decompress', legacy, destination)
-    assert destination.read_bytes() == b'legacy data'
-    destination.unlink()
+    for chunks in [[], [b'legacy data'], [b'first', b'', bytes(range(256)), b'last']]:
+        # Strip each fixture's signature/footer to assemble independent blocks.
+        data = b''.join(chunks)
+        legacy.write_bytes(b'BWA1' + b''.join(nested(chunk)[4:-12] for chunk in chunks)
+                           + struct.pack('<IQ', 0, len(data)))
+        inspect_without_writes(legacy, {'(unnamed)': ('file', len(data))})
+        run('decompress', legacy, destination)
+        assert destination.is_file() and destination.read_bytes() == data
+        destination.unlink()
     assert not list(root.glob('.compressor-*'))
 
 print('BWA2 tests passed')

@@ -47,3 +47,6 @@ Thumbs.db
 /.agents/
 /.codex/
 /.aws/
+
+# Local project context
+/PROJECT_MAP.md
