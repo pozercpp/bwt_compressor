@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <span>
 
 namespace archive {
 
@@ -22,5 +23,17 @@ struct Options {
 [[nodiscard]] std::uint64_t decompress_file(const std::filesystem::path& input,
                                            const std::filesystem::path& output,
                                            Options options = {});
+
+// BWA2: store files/directories under their basenames. Reject links, special
+// files and duplicate stored paths. Output must not exist. Return total bytes.
+[[nodiscard]] std::uint64_t create(std::span<const std::filesystem::path> inputs,
+                                  const std::filesystem::path& output,
+                                  Options options = {});
+
+// Detect format: BWA2 extracts into a new directory; legacy BWA1 into a new
+// file. Publish only after all records have been validated successfully.
+[[nodiscard]] std::uint64_t extract(const std::filesystem::path& input,
+                                   const std::filesystem::path& output,
+                                   Options options = {});
 
 } // namespace archive

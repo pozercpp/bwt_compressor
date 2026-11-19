@@ -1,5 +1,5 @@
-#include "huffman.hpp"
-#include <compression.hpp>
+#include <compression/huffman/huffman.hpp>
+#include <compression/compression.hpp>
 
 #include <algorithm>
 #include <ranges>

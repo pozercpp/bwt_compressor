@@ -1,5 +1,5 @@
-#include <compression.hpp>
-#include "arithmetic.hpp"
+#include <compression/compression.hpp>
+#include <compression/arithmetic/arithmetic.hpp>
 #include <source_location>
 #include <string>
 

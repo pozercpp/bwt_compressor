@@ -17,6 +17,11 @@ def run(*args, expected=0):
     return result
 
 
+def legacy_create(source, destination):
+    subprocess.run([str(backend), "compress", str(source), str(destination), "2"],
+                   check=True, capture_output=True, timeout=60)
+
+
 with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     root = pathlib.Path(directory)
     assert b"--threads" not in run("--help").stdout
@@ -31,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
                rng.randbytes(1024 * 1024 + 123)]
     for sample in samples:
         source.write_bytes(sample)
-        run("compress", source, archive)
+        legacy_create(source, archive)
         run("decompress", archive, restored)
         assert restored.read_bytes() == sample
         assert source.read_bytes() == sample
@@ -54,12 +59,6 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
         assert restored.read_bytes() == mixed
         restored.unlink()
     assert archives[0] == archives[1] == archives[2], "Block order or format changed"
-    automatic = root / "automatic.bwa"
-    run("compress", source, automatic)
-    assert automatic.read_bytes() == archives[0]
-    run("decompress", automatic, restored)
-    assert restored.read_bytes() == mixed
-    restored.unlink()
     # Error in a later worker, with already written and queued blocks.
     late_bad = bytearray(archives[0])
     offset = 4
@@ -76,21 +75,19 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     run("compress", source, restored, "--unknown", 2, expected=2)
 
     source.write_bytes(b"abc" * 800000)
-    run("compress", source, archive)
+    legacy_create(source, archive)
     valid = archive.read_bytes()
     assert valid[:4] == b"BWA1"
     # The output must not overwrite an existing file or the input itself.
     run("compress", source, source, expected=1)
     assert source.read_bytes() == b"abc" * 800000
-    run("compress", source, archive, expected=1)
+    run("compress", archive, source, expected=1)
     assert archive.read_bytes() == valid
     restored.write_bytes(b"keep me")
     run("decompress", archive, restored, expected=1)
     assert restored.read_bytes() == b"keep me"
     restored.unlink()
-    run("compress", root / "missing", restored, expected=1)
-    assert not restored.exists()
-    run("compress", root, restored, expected=1)
+    run("compress", restored, root / "missing", expected=1)
     assert not restored.exists()
 
     bad = root / "bad.bwa"

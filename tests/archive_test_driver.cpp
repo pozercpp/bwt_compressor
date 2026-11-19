@@ -1,5 +1,5 @@
 // Test-only adapter for checking backend worker counts without CLI options.
-#include <archive.hpp>
+#include <archive/archive.hpp>
 
 #include <exception>
 #include <iostream>

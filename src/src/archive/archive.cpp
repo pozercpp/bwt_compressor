@@ -1,7 +1,8 @@
-#include <archive.hpp>
-#include "block_pool.hpp"
+#include <archive/archive.hpp>
+#include <archive/archive_internal.hpp>
+#include <concurrency/block_pool.hpp>
 
-#include <compression.hpp>
+#include <compression/compression.hpp>
 #include <algorithm>
 #include <array>
 #include <deque>
@@ -15,8 +16,8 @@
 #include <vector>
 
 namespace archive {
-namespace {
-using detail::BlockPool;
+namespace detail {
+using concurrency::BlockPool;
 constexpr std::array magic{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'1'}};
 constexpr std::size_t block_header_size = 17;
 
@@ -109,7 +110,7 @@ std::uint64_t compress_stream(std::istream& in, std::ostream& out, unsigned thre
     return total;
 }
 
-std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned threads) {
+std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned threads, bool standalone, std::uint64_t max_output) {
     std::array<std::byte, 4> signature{};
     read_bytes(in, signature);
     if (!std::ranges::equal(signature, magic)) throw std::runtime_error("Unsupported archive format; expected BWA1.");
@@ -119,6 +120,7 @@ std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned th
     auto write_next = [&] {
         auto decoded = pending.front().get();
         if (decoded.empty()) throw std::runtime_error("Unexpected empty archive block.");
+        if (decoded.size() > max_output - total) throw std::runtime_error("Decoded file exceeds its declared size.");
         write_bytes(out, decoded);
         add_size(total, decoded.size());
         pending.pop_front();
@@ -136,8 +138,8 @@ std::uint64_t decompress_stream(std::istream& in, std::ostream& out, unsigned th
     }
     while (!pending.empty()) write_next();
     if (read_number(in, 8) != total) throw std::runtime_error("Archive size check failed.");
-    if (in.peek() != std::char_traits<char>::eof()) throw std::runtime_error("Unexpected trailing archive data.");
-    if (in.bad() || !in.eof()) throw std::runtime_error("Failed to read archive ending.");
+    if (standalone && in.peek() != std::char_traits<char>::eof()) throw std::runtime_error("Unexpected trailing archive data.");
+    if (standalone && (in.bad() || !in.eof())) throw std::runtime_error("Failed to read archive ending.");
     return total;
 }
 
@@ -154,7 +156,7 @@ std::uint64_t process_file(const std::filesystem::path& input_path,
     if (!input) throw std::runtime_error("Cannot open input file: " + input_path.string());
     OutputFile output(output_path);
     const auto total = compressing ? compress_stream(input, output.stream(), options.threads)
-                                  : decompress_stream(input, output.stream(), options.threads);
+                                  : decompress_stream(input, output.stream(), options.threads, true);
     output.finish();
     return total;
 }
@@ -166,11 +168,11 @@ unsigned default_thread_count() noexcept {
 
 std::uint64_t compress_file(const std::filesystem::path& input,
                             const std::filesystem::path& output, Options options) {
-    return process_file(input, output, options, true);
+    return detail::process_file(input, output, options, true);
 }
 
 std::uint64_t decompress_file(const std::filesystem::path& input,
                               const std::filesystem::path& output, Options options) {
-    return process_file(input, output, options, false);
+    return detail::process_file(input, output, options, false);
 }
 } // namespace archive
