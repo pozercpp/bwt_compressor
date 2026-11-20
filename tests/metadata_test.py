@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='bwa3-tests-') as temporary:
         packed = root / 'metadata.bwa'
         run('compress', packed, source)
         encoded = packed.read_bytes()
-        assert encoded[:5] == b'BWA5\x01'
+        assert encoded[:5] == b'BWA6\x01'
         name_size = struct.unpack_from('<I', encoded, 5)[0]
         mode, seconds, nanos = struct.unpack_from('<IqI', encoded, 9 + name_size)
         assert (mode, seconds * 1000000000 + nanos) == expected[pathlib.Path('.')]

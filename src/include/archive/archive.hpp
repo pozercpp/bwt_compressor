@@ -1,5 +1,6 @@
 #pragma once
 
+#include <archive/password.hpp>
 #include <cstdint>
 #include <chrono>
 #include <optional>
@@ -32,6 +33,9 @@ struct Options {
     // Exceptions propagate; a final callback exception leaves the published output.
     // list/test do not report progress. Callbacks must not modify operation files.
     ProgressCallback progress;
+    bool encrypt = false; // create only; readers detect BWE1 automatically.
+    // Synchronous; bool is true when creating (CLI should confirm the password).
+    std::function<void(Password&, bool)> password;
 
 };
 
@@ -59,22 +63,24 @@ struct EntryInfo {
 };
 using EntryVisitor = std::function<void(const EntryInfo&)>;
 
-// Read metadata/framing without decoding payloads or checking CRC. No writes.
+// Read metadata/framing without decoding payloads; verify BWA6 CRC and BWE1 authentication. No writes.
 [[nodiscard]] std::uint64_t list(const std::filesystem::path& input,
-                                const EntryVisitor& visitor);
+                                const EntryVisitor& visitor, Options options = {});
 // Fully decode and validate, discarding output. No filesystem writes.
 [[nodiscard]] std::uint64_t test(const std::filesystem::path& input,
                                 Options options = {});
 
-// BWA5: bounded solid groups; preserve rwx/mtime, internal symlinks and regular-file hard links.
+// BWA6: archive CRC and bounded solid groups; preserve rwx/mtime, internal symlinks and regular-file hard links.
+// Options::encrypt wraps BWA6 in authenticated BWE1 and requires a password callback.
 // FIFO requires allow_fifo. Devices/sockets are rejected. Output must not exist.
 // Return logical bytes, counting each hard-link name.
 [[nodiscard]] std::uint64_t create(std::span<const std::filesystem::path> inputs,
                                   const std::filesystem::path& output,
                                   Options options = {});
 
-// Detect format: BWA2/BWA3/BWA4/BWA5 extract into a new directory; legacy BWA1 into a new
-// file. Publish only after all records have been validated successfully.
+// Detect format: BWA2/BWA3/BWA4/BWA5/BWA6 extract into a new directory; legacy BWA1 into a new
+// file. BWE1 decrypts exactly one BWA6, using the password callback.
+// Publish only after all records have been validated successfully.
 [[nodiscard]] std::uint64_t extract(const std::filesystem::path& input,
                                    const std::filesystem::path& output,
                                    Options options = {});

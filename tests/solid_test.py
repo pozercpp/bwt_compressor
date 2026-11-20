@@ -29,6 +29,13 @@ with tempfile.TemporaryDirectory() as temp:
     out = root / 'out'
     run('decompress', packed, out)
     assert {p.name: p.read_bytes() for p in (out / 'source').iterdir()} == expected
+    # BWA5 solid streams retain their original checksum-free framing.
+    legacy = root / 'legacy'
+    legacy.write_bytes(b'BWA5' + packed.read_bytes()[4:-4])
+    run('test', legacy)
+    run('list', legacy)
+    run('decompress', legacy, root / 'legacy-out')
+    assert {p.name: p.read_bytes() for p in (root / 'legacy-out' / 'source').iterdir()} == expected
     data = bytearray(packed.read_bytes())
     group = 4 + 1 + 4 + len('source') + 16
     assert data[group] == 6

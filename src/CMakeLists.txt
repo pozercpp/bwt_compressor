@@ -18,12 +18,16 @@ target_compile_features(compressor_concurrency PUBLIC cxx_std_23)
 target_link_libraries(compressor_concurrency PRIVATE bwt::compression Threads::Threads)
 set_target_properties(compressor_concurrency PROPERTIES CXX_EXTENSIONS OFF)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium>=1.0.18)
+
 add_library(compressor_archive
+    src/archive/encryption.cpp
     src/archive/archive.cpp
     src/archive/archive_v2.cpp
 )
 add_library(compressor::archive ALIAS compressor_archive)
 target_include_directories(compressor_archive PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(compressor_archive PUBLIC cxx_std_23)
-target_link_libraries(compressor_archive PRIVATE bwt::compression compressor::concurrency Threads::Threads)
+target_link_libraries(compressor_archive PRIVATE bwt::compression compressor::concurrency Threads::Threads PkgConfig::SODIUM)
 set_target_properties(compressor_archive PROPERTIES CXX_EXTENSIONS OFF)

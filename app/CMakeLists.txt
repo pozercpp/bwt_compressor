@@ -5,6 +5,6 @@ target_link_libraries(compressor_cli_progress PUBLIC compressor::archive)
 target_compile_features(compressor_cli_progress PUBLIC cxx_std_23)
 set_target_properties(compressor_cli_progress PROPERTIES CXX_EXTENSIONS OFF)
 
-add_executable(compressor main.cpp)
+add_executable(compressor main.cpp password_input.cpp)
 target_link_libraries(compressor PRIVATE compressor::archive compressor::cli_progress)
 set_target_properties(compressor PROPERTIES CXX_EXTENSIONS OFF)

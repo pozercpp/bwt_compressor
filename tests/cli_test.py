@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="compressor-cli-") as directory:
     root = pathlib.Path(directory)
     assert b"--threads" not in run("--help").stdout
     help_text = run('--help').stdout
-    assert b'does NOT verify contents or CRC' in help_text
+    assert b'does NOT decode blocks or verify block CRC' in help_text
     assert b'fully decode' in help_text
     for command in ('list', 'test'):
         run(command, expected=2)

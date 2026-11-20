@@ -36,3 +36,9 @@ add_test(NAME solid_tests COMMAND ${Python3_EXECUTABLE}
 add_executable(archive_parallel_tests archive_parallel_test.cpp)
 target_link_libraries(archive_parallel_tests PRIVATE compressor::archive)
 add_test(NAME archive_parallel_tests COMMAND archive_parallel_tests)
+
+add_test(NAME checksum_tests COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/checksum_test.py $<TARGET_FILE:compressor>)
+
+add_test(NAME encryption_tests COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/encryption_test.py $<TARGET_FILE:compressor>)

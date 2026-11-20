@@ -1,4 +1,6 @@
 #include <archive/archive.hpp>
+#include <archive/encryption.hpp>
+#include <archive/checksum_buffer.hpp>
 #include <archive/archive_internal.hpp>
 #include <concurrency/block_pool.hpp>
 #include <compression/compression.hpp>
@@ -39,6 +41,7 @@ constexpr std::size_t max_entries = 100000;
 constexpr std::size_t max_name_bytes = 64 * 1024 * 1024;
 constexpr std::size_t solid_limit = 1024 * 1024;
 constexpr std::size_t solid_entries = 4096;
+constexpr std::array signature6{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'6'}};
 constexpr std::array signature5{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'5'}};
 constexpr std::array signature4{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'4'}};
 constexpr std::array signature3{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'3'}};
@@ -447,6 +450,8 @@ class DiscardBuffer : public std::streambuf {
 unsigned read_format(std::istream& in) {
     std::array<std::byte, 4> signature{};
     read_bytes(in, signature);
+    if (signature == std::array{std::byte{'B'}, std::byte{'W'}, std::byte{'E'}, std::byte{'1'}}) return 7;
+    if (signature == signature6) return 6;
     if (signature == signature5) return 5;
     if (signature == signature4) return 4;
     if (signature == signature3) return 3;
@@ -465,6 +470,26 @@ std::ifstream open_archive(const fs::path& input) {
     if (!in) invalid("Cannot open archive.");
     return in;
 }
+
+// Own the transport for the entire operation. Authentication of the initial
+// frame occurs here, before extraction creates a staging directory.
+class ArchiveInput {
+    std::ifstream raw_;
+    std::unique_ptr<DecryptBuffer> decrypt_;
+    std::unique_ptr<std::istream> plain_;
+public:
+    unsigned format;
+    ArchiveInput(const fs::path& path, const Options& options) : raw_(open_archive(path)), format(read_format(raw_)) {
+        if (format == 7) {
+            decrypt_ = std::make_unique<DecryptBuffer>(raw_, options);
+            plain_ = std::make_unique<std::istream>(decrypt_.get());
+            plain_->exceptions(std::ios::badbit);
+            format = read_format(*plain_);
+            if (format != 6) invalid("BWE1 must contain exactly one BWA6 archive.");
+        }
+    }
+    std::istream& stream() { return plain_ ? *plain_ : raw_; }
+};
 
 void apply_metadata(int root, const Entry& entry) {
     if (!std::in_range<time_t>(entry.meta.seconds)) invalid("Modification time is out of range.");
@@ -502,7 +527,7 @@ void materialize_links(int root, const std::vector<Entry>& entries) {
 // Shared record validation for extraction, listing and full verification.
 // root == -1 means read-only inspection; no filesystem objects are created.
 std::uint64_t walk_records(std::istream& in, int root, bool verify, Options options,
-                          const EntryVisitor& visitor, unsigned format, ProgressTracker* progress = nullptr) {
+                          const EntryVisitor& visitor, unsigned format, ProgressTracker* progress = nullptr, ChecksumBuffer* checksum = nullptr) {
     Names names;
     std::vector<Entry> entries;
     std::size_t metadata_bytes = 0;
@@ -512,7 +537,7 @@ std::uint64_t walk_records(std::istream& in, int root, bool verify, Options opti
     for (;;) {
         const auto type = static_cast<unsigned>(read_number(in, 1));
         if (type == 0) break;
-        if (type == 6 && format == 5) {
+        if (type == 6 && format >= 5) {
             const auto count = read_number(in, 4);
             if (!count || count > solid_entries) invalid("Invalid solid entry count.");
             const auto first = entries.size();
@@ -605,6 +630,10 @@ std::uint64_t walk_records(std::istream& in, int root, bool verify, Options opti
         entries.push_back(std::move(entry));
     }
     if (read_number(in, 8) != entries.size() || read_number(in, 8) != total) invalid("Archive totals mismatch.");
+    if (format == 6) {
+        const auto expected = checksum->checksum();
+        if (read_number(in, 4) != expected) invalid("Archive checksum mismatch.");
+    }
     end_of_input(in);
     if (format >= 4) validate_links(entries);
     if (root >= 0) {
@@ -622,9 +651,15 @@ std::uint64_t walk_records(std::istream& in, int root, bool verify, Options opti
 std::uint64_t inspect(const fs::path& input, bool verify, Options options,
                       const EntryVisitor& visitor) {
     check_options(options);
-    auto in = open_archive(input);
-    const auto format = read_format(in);
-    if (format != 1) return walk_records(in, -1, verify, options, visitor, format);
+    ArchiveInput source(input, options);
+    auto& in = source.stream();
+    const auto format = source.format;
+    if (format != 1) {
+        ChecksumBuffer checksum(in.rdbuf(), true);
+        std::istream checked(&checksum);
+        checked.exceptions(std::ios::badbit);
+        return walk_records(format == 6 ? checked : in, -1, verify, options, visitor, format, nullptr, &checksum);
+    }
     DiscardBuffer buffer;
     std::ostream discard(&buffer);
     const auto total = verify ? decompress_stream(in, discard, options.threads, true)
@@ -713,9 +748,16 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
     Stage stage(output);
     std::ofstream destination(stage.payload(), std::ios::binary | std::ios::noreplace);
     if (!destination) invalid("Cannot create temporary archive.");
-    ArchiveWriter writer(destination, options.threads, progress);
+    std::unique_ptr<EncryptBuffer> encrypt;
+    if (options.encrypt) encrypt = std::make_unique<EncryptBuffer>(destination, options);
+    std::ostream transport(encrypt ? static_cast<std::streambuf*>(encrypt.get()) : destination.rdbuf());
+    transport.exceptions(std::ios::badbit);
+    ChecksumBuffer checksum(transport.rdbuf());
+    std::ostream checked(&checksum);
+    checked.exceptions(std::ios::badbit);
+    ArchiveWriter writer(checked, options.threads, progress);
     auto& out = writer.headers;
-    write_bytes(out, signature5);
+    write_bytes(out, signature6);
     std::uint64_t total = 0;
     for (std::size_t index = 0; index < entries.size();) {
         writer.bound_headers();
@@ -800,6 +842,8 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
     write_number(out, entries.size(), 8);
     write_number(out, total, 8);
     writer.flush();
+    write_number(transport, checksum.checksum(), 4);
+    if (encrypt) encrypt->finish();
     const auto result_size = destination.tellp();
     if (result_size < 0) invalid("Cannot determine archive size.");
     destination.close();
@@ -812,8 +856,9 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
 std::uint64_t extract(const fs::path& input, const fs::path& output, Options options) {
     ProgressTracker progress(options.progress);
     check_options(options);
-    auto in = open_archive(input);
-    const auto format = read_format(in);
+    ArchiveInput source(input, options);
+    auto& in = source.stream();
+    const auto format = source.format;
     progress.start(fs::file_size(input), std::nullopt);
     if (format == 1) {
         Stage stage(output);
@@ -831,13 +876,16 @@ std::uint64_t extract(const fs::path& input, const fs::path& output, Options opt
     fs::create_directory(stage.payload());
     if (format >= 3) fs::permissions(stage.payload(), fs::perms::owner_all, fs::perm_options::add);
     auto root = open_at(AT_FDCWD, stage.payload().string(), O_RDONLY | O_DIRECTORY);
-    const auto total = walk_records(in, root.get(), true, options, {}, format, &progress);
+    ChecksumBuffer checksum(in.rdbuf(), true);
+    std::istream checked(&checksum);
+    checked.exceptions(std::ios::badbit);
+    const auto total = walk_records(format == 6 ? checked : in, root.get(), true, options, {}, format, &progress, &checksum);
     stage.publish();
     progress.finish(total);
     return total;
 }
-std::uint64_t list(const fs::path& input, const EntryVisitor& visitor) {
-    return inspect(input, false, {}, visitor);
+std::uint64_t list(const fs::path& input, const EntryVisitor& visitor, Options options) {
+    return inspect(input, false, options, visitor);
 }
 
 std::uint64_t test(const fs::path& input, Options options) {
