@@ -42,3 +42,12 @@ add_test(NAME checksum_tests COMMAND ${Python3_EXECUTABLE}
 
 add_test(NAME encryption_tests COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/encryption_test.py $<TARGET_FILE:compressor>)
+
+# Only corpus/report correctness is tested; timings and RSS have no thresholds.
+add_test(NAME benchmark_tests COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/benchmark_test.py $<TARGET_FILE:compressor>)
+
+add_executable(fuzz_corpus_driver fuzz_corpus_driver.cpp)
+target_link_libraries(fuzz_corpus_driver PRIVATE compressor::archive bwt::compression)
+add_test(NAME fuzz_corpus_tests COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_corpus_test.py $<TARGET_FILE:fuzz_corpus_driver>)

@@ -26,7 +26,6 @@ auto main(int argc, char* argv[]) -> signed {
             << "BWE1 is detected on reading. Password: terminal without echo, or one line from --password-fd N.\n"
             << "Existing output files are never overwritten.\n";
     };
-
     if (argc == 2 && std::string_view(argv[1]) == "--help") {
         usage(std::cout);
         return 0;

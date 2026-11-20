@@ -1,0 +1,152 @@
+{
+  "bwc1/raw": {
+    "valid": true,
+    "bytes": 28,
+    "sha256": "d130c8bdb6a1104f95d0684c7ef9faac86b4973968276356939610c9791e21a9"
+  },
+  "bwc1/empty": {
+    "valid": true,
+    "bytes": 17,
+    "sha256": "10365ecac6db6066c9e1a793962af0f966ceda7f015f913a0d2621db3e332963"
+  },
+  "bwc1/legacy_mode1": {
+    "valid": true,
+    "bytes": 22,
+    "sha256": "5bd67a81628f3e5d5c1a46cb421b134b6e1f612ae718aee47289e1c53d3970bd"
+  },
+  "bwc1/legacy_mode2": {
+    "valid": true,
+    "bytes": 147,
+    "sha256": "b509b5dbeffad625bf9f80fc7ea0d43ea55f8e00e8db85bc9629449e0cfed218"
+  },
+  "bwc1/arithmetic_mode3": {
+    "valid": true,
+    "bytes": 31,
+    "sha256": "1098e4f471fa7742901856d7085021bf53130a90a305df316b72206a56cb27ea"
+  },
+  "bwc1/huffman_mode4": {
+    "valid": true,
+    "bytes": 282,
+    "sha256": "2885c097dd50185ea8ca9dbaad223658a1c76c69e2ce3406b1e208b00c51a0db"
+  },
+  "bwc1/bad_crc": {
+    "valid": false,
+    "bytes": 22,
+    "sha256": "6b79332d97aba94a63c0547898074dfd17c2b56fee8a73daf23562af9fb956f8"
+  },
+  "bwc1/truncated": {
+    "valid": false,
+    "bytes": 5,
+    "sha256": "5a93c2aba599699b49e3c2e680069d8c0263cc4cc183f513cc5169f3f44cbf9c"
+  },
+  "bwa1/empty": {
+    "valid": true,
+    "bytes": 16,
+    "sha256": "eabf97a90f522885b07b6e85577e1dcbcadd99945e485f35904b034585e9fdf3"
+  },
+  "bwa1/raw": {
+    "valid": true,
+    "bytes": 48,
+    "sha256": "d983df375eb49ec8325101182358a4e97ef29964f327cda5f219ee37a339f761"
+  },
+  "bwa1/legacy_mode1": {
+    "valid": true,
+    "bytes": 42,
+    "sha256": "528b95ee73002b55845aa2c4580c89a67456aa1e64a21c4f68fbaa865e67ab61"
+  },
+  "bwa1/legacy_mode2": {
+    "valid": true,
+    "bytes": 167,
+    "sha256": "ad69db925a603eda472dc97089786cc1d0471e302b2c187d1c8948da8ab9da65"
+  },
+  "bwa1/arithmetic_mode3": {
+    "valid": true,
+    "bytes": 51,
+    "sha256": "5b9305943bc888d906450f800445995b2719edf96c7aaa45dbbe7385deae030d"
+  },
+  "bwa1/huffman_mode4": {
+    "valid": true,
+    "bytes": 302,
+    "sha256": "b54d7c913bc619ddb7cb7680226c8d44690301c380fa8f3a4bb092edd8ac3862"
+  },
+  "bwa1/truncated_footer": {
+    "valid": false,
+    "bytes": 15,
+    "sha256": "5100ec5df8068be97ce4d338c1d5777b6c5e00ada5aa6775557eacfb50f1fb4b"
+  },
+  "bwa1/oversized_block": {
+    "valid": false,
+    "bytes": 8,
+    "sha256": "d82594bba568fe105af2350952b9fd37b2cc85e4aadc1bf2df556aacc15e7d67"
+  },
+  "bwa2/v2_file": {
+    "valid": true,
+    "bytes": 91,
+    "sha256": "645302ff4998166f1eb30c1f8c9d9083bd83f45f59c3d7451407c7bf8d59cc88"
+  },
+  "bwa2/v3_file": {
+    "valid": true,
+    "bytes": 123,
+    "sha256": "cea4818378e21af93602908f11f2fa97d0545c9e45f44927f6cd23ded935148f"
+  },
+  "bwa2/v4_file": {
+    "valid": true,
+    "bytes": 123,
+    "sha256": "a6337105cde5f03b0a0c4c1a487e37e4b65461cbaeb2e7877bf2652e6a3c77ba"
+  },
+  "bwa2/v5_file": {
+    "valid": true,
+    "bytes": 123,
+    "sha256": "d51e8d209af54a73da858c6b6e8debbe6736a1f4697ad6d2548fa8d3f767a303"
+  },
+  "bwa2/v6_file": {
+    "valid": true,
+    "bytes": 127,
+    "sha256": "892966dd9fe889d2440cac4e803cf06bbe475ff9ec9c38f93cbfba0c2acb3beb"
+  },
+  "bwa2/legacy_mode1": {
+    "valid": true,
+    "bytes": 77,
+    "sha256": "83a28afd7dcbfa2816b0d844e663a009a5718b15fc5b3ed06bc06fd04e90d0f2"
+  },
+  "bwa2/legacy_mode2": {
+    "valid": true,
+    "bytes": 202,
+    "sha256": "6d62cb9b2ac212ce0ebf7719242bae2199cfcef535d1b6efe113f20cd9eac7c1"
+  },
+  "bwa2/arithmetic_mode3": {
+    "valid": true,
+    "bytes": 86,
+    "sha256": "37e007734df4d534a4d7821283054145b6c63e2fea2e94ff321b1d2d7c850325"
+  },
+  "bwa2/huffman_mode4": {
+    "valid": true,
+    "bytes": 337,
+    "sha256": "ff1584a6ff062c259adf290ee683caa71d66b01b15eb250673887f2fb0f7a28a"
+  },
+  "bwa2/empty": {
+    "valid": true,
+    "bytes": 21,
+    "sha256": "2812b13bca13627eeaf965c443fb12544ad0ca0150ecfcab635b44c7f4606e42"
+  },
+  "bwa2/traversal": {
+    "valid": false,
+    "bytes": 35,
+    "sha256": "60a3cc25a9f39c2379dc0b2ea8bfef850ad126d5f9f628a49f898899701251f1"
+  },
+  "bwa2/truncated_name": {
+    "valid": false,
+    "bytes": 9,
+    "sha256": "202764459a7280b3b58afbd65a0b42f05db3c8f124c345af4be7a7bc69ccda5b"
+  },
+  "bwa2/v5_solid": {
+    "valid": true,
+    "bytes": 103,
+    "sha256": "1026d6a4d423f84aff1dbdf8645e5ec7e2dc7baa9e6d7184db348fe0d8cc0518"
+  },
+  "bwa2/v6_solid": {
+    "valid": true,
+    "bytes": 107,
+    "sha256": "546fedd9062078794fe7d66eb05a376216def27538986e3527ea838f617fdb65"
+  }
+}
