@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory(prefix='bwa4-tests-') as tmp:
     packed = root / 'packed'
     run('compress', packed, src)
     original = packed.read_bytes()
-    assert original[:4] == b'BWA4'
+    assert original[:4] == b'BWA5'
     assert original.count(b'BWC1') == 1
     listing = run('list', packed).stdout.decode()
     assert 'hardlink\t5\ttree/hard\ttree/dir/data\n' in listing

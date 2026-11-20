@@ -17,7 +17,7 @@ auto main(int argc, char* argv[]) -> signed {
             << "list: show type, original size and path; does NOT verify contents or CRC.\n"
             << "test: fully decode and verify CRC, sizes, paths, structure and totals.\n"
             << "list/test create no files or directories. BWA1 paths are shown as (unnamed).\n"
-            << "BWA4 preserves internal links; FIFO creation requires --allow-fifo.\n"
+            << "BWA5 preserves internal links; FIFO creation requires --allow-fifo.\n"
             << "Progress and statistics go to stderr; dynamic progress requires a terminal.\n"
             << "Existing output files are never overwritten.\n";
     };

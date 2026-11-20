@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='bwa3-tests-') as temporary:
         packed = root / 'metadata.bwa'
         run('compress', packed, source)
         encoded = packed.read_bytes()
-        assert encoded[:5] == b'BWA4\x01'
+        assert encoded[:5] == b'BWA5\x01'
         name_size = struct.unpack_from('<I', encoded, 5)[0]
         mode, seconds, nanos = struct.unpack_from('<IqI', encoded, 9 + name_size)
         assert (mode, seconds * 1000000000 + nanos) == expected[pathlib.Path('.')]
@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='bwa3-tests-') as temporary:
     run('decompress', bad, root / 'failed', expected=1)
     assert not (root / 'failed').exists()
     assert not list(root.glob('.compressor-*'))
-    bad.write_bytes(b'BWA5' + archive(b'', 0)[4:])
+    bad.write_bytes(b'BWA6' + archive(b'', 0)[4:])
     run('test', bad, expected=1)
 
 print('BWA3 metadata tests passed')

@@ -1,5 +1,7 @@
 #include <archive/archive.hpp>
 #include <archive/archive_internal.hpp>
+#include <concurrency/block_pool.hpp>
+#include <compression/compression.hpp>
 
 #include <algorithm>
 #include <array>
@@ -15,6 +17,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <streambuf>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -34,6 +37,9 @@ using namespace detail;
 constexpr std::size_t max_path_bytes = 4096;
 constexpr std::size_t max_entries = 100000;
 constexpr std::size_t max_name_bytes = 64 * 1024 * 1024;
+constexpr std::size_t solid_limit = 1024 * 1024;
+constexpr std::size_t solid_entries = 4096;
+constexpr std::array signature5{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'5'}};
 constexpr std::array signature4{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'4'}};
 constexpr std::array signature3{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'3'}};
 constexpr std::array signature2{std::byte{'B'}, std::byte{'W'}, std::byte{'A'}, std::byte{'2'}};
@@ -441,6 +447,7 @@ class DiscardBuffer : public std::streambuf {
 unsigned read_format(std::istream& in) {
     std::array<std::byte, 4> signature{};
     read_bytes(in, signature);
+    if (signature == signature5) return 5;
     if (signature == signature4) return 4;
     if (signature == signature3) return 3;
     if (signature == signature2) return 2;
@@ -505,7 +512,51 @@ std::uint64_t walk_records(std::istream& in, int root, bool verify, Options opti
     for (;;) {
         const auto type = static_cast<unsigned>(read_number(in, 1));
         if (type == 0) break;
-        if (type > (format == 4 ? 5u : 2u)) invalid("Unsupported archive entry type.");
+        if (type == 6 && format == 5) {
+            const auto count = read_number(in, 4);
+            if (!count || count > solid_entries) invalid("Invalid solid entry count.");
+            const auto first = entries.size();
+            std::uint64_t size = 0;
+            for (std::uint64_t i = 0; i < count; ++i) {
+                Entry member;
+                member.type = 2;
+                member.name = read_name(in);
+                names.add(member.name, false);
+                if (member.name.size() > max_name_bytes - metadata_bytes) invalid("Too much archive metadata.");
+                metadata_bytes += member.name.size();
+                member.meta = read_metadata(in);
+                member.size = read_number(in, 8);
+                if (member.size > solid_limit - size) invalid("Solid group exceeds limit.");
+                size += member.size;
+                entries.push_back(std::move(member));
+            }
+            std::ostringstream decoded;
+            const auto actual = verify
+                ? decompress_stream(in, decoded, options.threads, false, size)
+                : list_stream(in, false);
+            if (actual != size) invalid("Solid size mismatch.");
+            const auto data = std::move(decoded).str();
+            std::size_t offset = 0;
+            for (std::size_t i = first; i < entries.size(); ++i) {
+                const auto& member = entries[i];
+                if (root >= 0) {
+                    auto parent = parent_at(root, member.name);
+                    auto fd = open_at(parent.fd.get(), parent.leaf, O_WRONLY | O_CREAT | O_EXCL, 0600);
+                    if (::fchmod(fd.get(), 0600)) system_error("Cannot prepare file");
+                    FdBuffer output_buffer(fd.get());
+                    std::ostream output(&output_buffer);
+                    output.write(data.data() + offset, member.size);
+                    if (!output) invalid("Cannot write solid file.");
+                    fd.finish();
+                }
+                offset += member.size;
+                if (visitor) visitor({member.name, false, member.size, EntryType::file, {}});
+            }
+            add_size(total, size);
+            if (progress) progress->advance(size);
+            continue;
+        }
+        if (type > (format >= 4 ? 5u : 2u)) invalid("Unsupported archive entry type.");
         Entry entry;
         entry.type = type;
         entry.name = read_name(in);
@@ -555,7 +606,7 @@ std::uint64_t walk_records(std::istream& in, int root, bool verify, Options opti
     }
     if (read_number(in, 8) != entries.size() || read_number(in, 8) != total) invalid("Archive totals mismatch.");
     end_of_input(in);
-    if (format == 4) validate_links(entries);
+    if (format >= 4) validate_links(entries);
     if (root >= 0) {
         materialize_links(root, entries);
         if (format >= 3) {
@@ -583,6 +634,72 @@ std::uint64_t inspect(const fs::path& input, bool verify, Options options,
 }
 } // namespace
 
+// One archive-wide queue. Headers travel with the following block, so only
+// the caller touches the output and completion order cannot change the format.
+class ArchiveWriter {
+    struct Pending {
+        std::string prefix;
+        std::future<concurrency::BlockPool::Bytes> result;
+        std::size_t original;
+    };
+    std::ostream& destination_;
+    detail::ProgressTracker& progress_;
+    const std::size_t limit_;
+    concurrency::BlockPool pool_;
+    std::deque<Pending> pending_;
+public:
+    std::ostringstream headers;
+    ArchiveWriter(std::ostream& out, unsigned threads, detail::ProgressTracker& progress)
+        : destination_(out), progress_(progress), limit_(2 * threads), pool_(threads) {}
+    void next() {
+        auto& item = pending_.front();
+        auto encoded = item.result.get();
+        destination_.write(item.prefix.data(), item.prefix.size());
+        detail::write_number(destination_, encoded.size(), 4);
+        detail::write_bytes(destination_, encoded);
+        const auto original = item.original;
+        pending_.pop_front();
+        progress_.advance(original);
+    }
+    void flush() {
+        while (!pending_.empty()) next();
+        const auto bytes = headers.str();
+        destination_.write(bytes.data(), bytes.size());
+        if (!destination_) throw std::runtime_error("Failed to write archive.");
+        headers.str({});
+    }
+    void reserve_block() {
+        if (pending_.size() == limit_) next();
+    }
+    void bound_headers() {
+        // Metadata-only runs must also have bounded buffering.
+        if (headers.tellp() >= 1024 * 1024) flush();
+    }
+    std::uint64_t compress(std::istream& in) {
+        headers.write("BWA1", 4);
+        std::uint64_t total = 0;
+        for (;;) {
+            // Reserve a slot before allocating/reading the next input block.
+            reserve_block();
+            concurrency::BlockPool::Bytes bytes(bwt::max_block_size);
+            in.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
+            const auto count = static_cast<std::size_t>(in.gcount());
+            if (in.bad() || (in.fail() && !in.eof())) throw std::runtime_error("Failed to read input.");
+            if (count) {
+                bytes.resize(count);
+                auto prefix = headers.str();
+                headers.str({});
+                pending_.push_back({std::move(prefix), pool_.submit(std::move(bytes), true), count});
+                detail::add_size(total, count);
+            }
+            if (in.eof()) break;
+        }
+        detail::write_number(headers, 0, 4);
+        detail::write_number(headers, total, 8);
+        return total;
+    }
+};
+
 std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, Options options) {
     ProgressTracker progress(options.progress);
     check_options(options);
@@ -594,11 +711,56 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
         if (entry.type == 2 || entry.type == 4) add_size(input_size, entry.size);
     progress.start(input_size, input_size);
     Stage stage(output);
-    std::ofstream out(stage.payload(), std::ios::binary | std::ios::noreplace);
-    if (!out) invalid("Cannot create temporary archive.");
-    write_bytes(out, signature4);
+    std::ofstream destination(stage.payload(), std::ios::binary | std::ios::noreplace);
+    if (!destination) invalid("Cannot create temporary archive.");
+    ArchiveWriter writer(destination, options.threads, progress);
+    auto& out = writer.headers;
+    write_bytes(out, signature5);
     std::uint64_t total = 0;
-    for (const auto& entry : entries) {
+    for (std::size_t index = 0; index < entries.size();) {
+        writer.bound_headers();
+        const auto& entry = entries[index];
+        if (entry.type == 2 && entry.size <= solid_limit) {
+            writer.reserve_block();
+            const auto first = index;
+            std::uint64_t size = 0;
+            while (index < entries.size() && index - first < solid_entries &&
+                   entries[index].type == 2 && entries[index].size <= solid_limit - size) {
+                size += entries[index++].size;
+            }
+            write_number(out, 6, 1);
+            write_number(out, index - first, 4);
+            std::string data;
+            data.reserve(size);
+            for (auto i = first; i < index; ++i) {
+                const auto& member = entries[i];
+                auto parent = source_parent(member.source);
+                auto fd = open_at(parent.fd.get(), parent.leaf, O_RDONLY | O_NONBLOCK);
+                struct stat status{};
+                if (::fstat(fd.get(), &status)) system_error("Cannot stat source file");
+                check_source(member, status);
+                write_number(out, member.name.size(), 4);
+                write_bytes(out, std::as_bytes(std::span(member.name)));
+                write_number(out, member.meta.mode, 4);
+                write_number(out, std::bit_cast<std::uint64_t>(member.meta.seconds), 8);
+                write_number(out, member.meta.nanos, 4);
+                write_number(out, member.size, 8);
+                FdBuffer input_buffer(fd.get());
+                std::istream input(&input_buffer);
+                const auto offset = data.size();
+                data.resize(offset + member.size);
+                input.read(data.data() + offset, member.size);
+                if (input.gcount() != static_cast<std::streamsize>(member.size) ||
+                    input.peek() != std::char_traits<char>::eof()) invalid("Input file size changed while archiving.");
+                if (::fstat(fd.get(), &status)) system_error("Cannot stat source file");
+                check_source(member, status);
+            }
+            std::istringstream input(std::move(data));
+            if (writer.compress(input) != size) invalid("Solid size mismatch.");
+            add_size(total, size);
+            continue;
+        }
+        ++index;
         auto parent = source_parent(entry.source);
         struct stat status{};
         if (::fstatat(parent.fd.get(), parent.leaf.c_str(), &status, AT_SYMLINK_NOFOLLOW)) system_error("Cannot stat source");
@@ -609,6 +771,7 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
         if (entry.type == 4) {
             write_number(out, entry.reference, 8);
             add_size(total, entry.size);
+            writer.flush();
             progress.advance(entry.size);
             continue;
         }
@@ -627,7 +790,7 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
         FdBuffer input_buffer(fd.get());
         std::istream in(&input_buffer);
         write_number(out, entry.size, 8);
-        const auto actual = compress_stream(in, out, options.threads, &progress);
+        const auto actual = writer.compress(in);
         if (actual != entry.size) invalid("Input file size changed while archiving.");
         if (::fstat(fd.get(), &status)) system_error("Cannot stat source file");
         check_source(entry, status);
@@ -636,10 +799,11 @@ std::uint64_t create(std::span<const fs::path> inputs, const fs::path& output, O
     write_number(out, 0, 1);
     write_number(out, entries.size(), 8);
     write_number(out, total, 8);
-    const auto result_size = out.tellp();
+    writer.flush();
+    const auto result_size = destination.tellp();
     if (result_size < 0) invalid("Cannot determine archive size.");
-    out.close();
-    if (!out) invalid("Cannot finish writing archive.");
+    destination.close();
+    if (!destination) invalid("Cannot finish writing archive.");
     stage.publish();
     progress.finish(static_cast<std::uint64_t>(result_size));
     return total;

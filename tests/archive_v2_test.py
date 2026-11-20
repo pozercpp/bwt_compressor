@@ -81,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='bwa2-tests-') as temporary:
             'directory' if path.is_dir() else 'file', 0 if path.is_dir() else path.stat().st_size)
     inspect_without_writes(archive, expected_entries)
     valid = archive.read_bytes()
-    assert valid[:4] == b'BWA4'
+    assert valid[:4] == b'BWA5'
     run('decompress', archive, destination)
     assert snapshot(destination / source.name) == snapshot(source)
     assert (destination / extra.name).read_bytes() == extra.read_bytes()

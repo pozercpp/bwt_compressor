@@ -29,3 +29,10 @@ target_link_libraries(progress_tests PRIVATE compressor::archive bwt::compressio
 add_test(NAME progress_tests COMMAND progress_tests)
 add_test(NAME progress_cli_tests COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/progress_test.py $<TARGET_FILE:compressor>)
+
+add_test(NAME solid_tests COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/solid_test.py $<TARGET_FILE:compressor>)
+
+add_executable(archive_parallel_tests archive_parallel_test.cpp)
+target_link_libraries(archive_parallel_tests PRIVATE compressor::archive)
+add_test(NAME archive_parallel_tests COMMAND archive_parallel_tests)
